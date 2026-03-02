@@ -58,6 +58,10 @@ jobs:
         env:
           TEMPORAL_ADDRESS: localhost:7233
 
+      - name: Show docker compose logs
+        if: failure()
+        run: docker compose logs
+
       - name: Tear down Temporal
         if: always()
         run: make stop_temporal
