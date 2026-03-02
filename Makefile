@@ -1,4 +1,4 @@
-.PHONY: test test_watch test_integration lint type format start_temporal stop_temporal test_integration_docker
+.PHONY: test test_watch test_integration lint type format build start_temporal stop_temporal wait_temporal test_integration_docker
 
 ######################
 # TESTING AND COVERAGE
@@ -43,6 +43,13 @@ format format_diff:
 	uv run ruff check --select I --fix $(PYTHON_FILES)
 
 ######################
+# BUILD
+######################
+
+build:
+	uv build
+
+######################
 # DOCKER TEMPORAL
 ######################
 
@@ -54,12 +61,14 @@ start_temporal:
 stop_temporal:
 	docker compose down
 
-test_integration_docker: start_temporal
+wait_temporal:
 	@echo "Waiting for Temporal server to be ready..."
 	@timeout=120; while [ "$$(docker inspect -f '{{.State.Status}}' temporal-create-namespace 2>/dev/null)" != "exited" ] || \
 		[ "$$(docker inspect -f '{{.State.ExitCode}}' temporal-create-namespace 2>/dev/null)" != "0" ]; do \
 		sleep 2; timeout=$$((timeout - 2)); \
-		if [ $$timeout -le 0 ]; then echo "Temporal failed to start"; docker compose down; exit 1; fi; \
+		if [ $$timeout -le 0 ]; then echo "Temporal failed to start"; docker compose logs; exit 1; fi; \
 	done
 	@echo "Temporal server is ready."
-	TEMPORAL_ADDRESS=localhost:$(TEMPORAL_GRPC_PORT) uv run pytest -m integration $(TEST) 
+
+test_integration_docker: start_temporal wait_temporal
+	TEMPORAL_ADDRESS=localhost:$(TEMPORAL_GRPC_PORT) uv run pytest -m integration $(TEST)
