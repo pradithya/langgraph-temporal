@@ -39,6 +39,9 @@ jobs:
       - name: Set up environment
         run: cp .env.ci .env
 
+      - name: Configure vm.max_map_count for Elasticsearch
+        run: sudo sysctl -w vm.max_map_count=262144
+
       - name: Start Temporal
         run: make start_temporal
 
