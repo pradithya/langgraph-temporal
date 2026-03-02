@@ -9,6 +9,8 @@ Temporal integration for LangGraph — durable execution for stateful AI agents.
 
 Run your existing LangGraph `StateGraph` as a [Temporal](https://temporal.io/) Workflow with automatic recovery from failures, distributed node execution, and zero-resource human-in-the-loop.
 
+> This project is experimental, use at your own risk
+
 ## Installation
 
 ```bash
