@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.urls]
-Source = "https://github.com/langchain-ai/langgraph-temporal"
+Source = "https://github.com/pradithya/langgraph-temporal"
 
 [dependency-groups]
 test = [
