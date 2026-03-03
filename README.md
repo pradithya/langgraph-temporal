@@ -1,7 +1,7 @@
 # Langgraph Temporal
 
 <p align="center">
-  <img src="docs/logo.png" alt="Logo">
+  <img src="https://raw.githubusercontent.com/pradithya/langgraph-temporal/main/docs/logo.png" alt="Logo">
 </p>
 
 
@@ -89,7 +89,7 @@ asyncio.run(main())
 
 The Temporal Web UI is available at `http://localhost:8233`
 
-![Demo](docs/demo.gif)
+![Demo](https://raw.githubusercontent.com/pradithya/langgraph-temporal/main/docs/demo.gif)
 
 
 ## License
