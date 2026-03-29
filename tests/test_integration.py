@@ -97,6 +97,8 @@ class TestPerNodeConfiguration:
         wf._node_task_queues = {"gpu_node": "gpu-queue"}
         wf._node_activity_options = {}
         wf._node_retry_policies = {}
+        wf._sticky_task_queue = None
+        wf._subagent_config = None
 
         assert wf._task_queue_for_node("gpu_node") == "gpu-queue"
         assert wf._task_queue_for_node("cpu_node") is None

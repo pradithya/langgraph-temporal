@@ -20,6 +20,7 @@ from langgraph.temporal.config import (
     ActivityOptions,
     RetryPolicyConfig,
     StateUpdatePayload,
+    SubAgentConfig,
     WorkflowInput,
     WorkflowOutput,
 )
@@ -122,6 +123,27 @@ class TemporalGraph:
                     max_attempts=getattr(policy, "max_attempts", 0),
                 )
 
+        # Read sticky_task_queue, use_worker_affinity, and subagent_config
+        sticky_task_queue: str | None = None
+        use_worker_affinity: bool = False
+        subagent_config: SubAgentConfig | None = None
+        if config and "configurable" in config:
+            sticky_task_queue = config["configurable"].get("sticky_task_queue")
+            use_worker_affinity = bool(
+                config["configurable"].get("use_worker_affinity", False)
+            )
+            raw_subagent = config["configurable"].get("subagent_config")
+            if isinstance(raw_subagent, SubAgentConfig):
+                subagent_config = raw_subagent
+            elif isinstance(raw_subagent, dict):
+                subagent_config = SubAgentConfig(
+                    task_queue=raw_subagent.get("task_queue"),
+                    sticky_task_queue=raw_subagent.get("sticky_task_queue"),
+                    execution_timeout_seconds=raw_subagent.get(
+                        "execution_timeout_seconds", 1800.0
+                    ),
+                )
+
         return WorkflowInput(
             graph_definition_ref=self._graph_ref,
             input_data=input if isinstance(input, dict) else {"__root__": input},
@@ -131,6 +153,9 @@ class TemporalGraph:
             node_task_queues=self.node_task_queues if self.node_task_queues else None,
             node_activity_options=serialized_options,
             node_retry_policies=serialized_retry,
+            sticky_task_queue=sticky_task_queue,
+            use_worker_affinity=use_worker_affinity,
+            subagent_config=subagent_config,
         )
 
     async def ainvoke(

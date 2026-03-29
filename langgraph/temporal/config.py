@@ -27,16 +27,35 @@ class ActivityOptions:
 
 
 @dataclass
+class SubAgentConfig:
+    """Configuration for sub-agent Child Workflow dispatch.
+
+    Attributes:
+        task_queue: Task queue for sub-agent Child Workflows.
+        sticky_task_queue: Sticky task queue for sub-agent worker affinity.
+        execution_timeout_seconds: Maximum execution time for sub-agent
+            Child Workflows in seconds.
+    """
+
+    task_queue: str | None = None
+    sticky_task_queue: str | None = None
+    execution_timeout_seconds: float = 1800.0
+
+
+@dataclass
 class RestoredState:
     """State carried across continue-as-new boundaries.
 
     Attributes:
         checkpoint: The serialized Checkpoint TypedDict.
         step: The current step counter.
+        sticky_task_queue: Sticky task queue name for worker affinity,
+            preserved across continue-as-new.
     """
 
     checkpoint: dict[str, Any]
     step: int
+    sticky_task_queue: str | None = None
 
 
 @dataclass
@@ -74,6 +93,16 @@ class WorkflowInput:
         node_task_queues: Per-node task queue overrides.
         node_activity_options: Per-node Activity configuration (serialized).
         node_retry_policies: Per-node retry policy configuration.
+        sticky_task_queue: Sticky task queue for worker affinity. When set,
+            overrides per-node task queue routing for all Activities.
+            Can be set explicitly or discovered at runtime via
+            `get_available_task_queue` when `use_worker_affinity` is True.
+        use_worker_affinity: When True, the Workflow calls the
+            `get_available_task_queue` activity at startup to discover a
+            worker-specific queue. All subsequent Activities are dispatched
+            to that queue. The discovered queue is forwarded on
+            continue-as-new via `sticky_task_queue`.
+        subagent_config: Configuration for sub-agent Child Workflow dispatch.
     """
 
     graph_definition_ref: str
@@ -85,6 +114,9 @@ class WorkflowInput:
     node_task_queues: dict[str, str] | None = None
     node_activity_options: dict[str, ActivityOptions] | None = None
     node_retry_policies: dict[str, RetryPolicyConfig] | None = None
+    sticky_task_queue: str | None = None
+    use_worker_affinity: bool = False
+    subagent_config: SubAgentConfig | None = None
 
 
 @dataclass
@@ -138,6 +170,8 @@ class NodeActivityOutput:
         interrupts: Interrupt payloads if node called interrupt().
         push_sends: Dynamic Send objects emitted during execution.
         command: Command metadata if node returned a Command.
+        child_workflow_requests: Requests for Child Workflow dispatch
+            (e.g., sub-agent invocations collected via context variable).
     """
 
     node_name: str
@@ -148,6 +182,7 @@ class NodeActivityOutput:
     push_sends: list[dict[str, Any]] | None = None
     command: dict[str, Any] | None = None
     custom_data: list[Any] | None = None
+    child_workflow_requests: list[dict[str, Any]] | None = None
 
 
 @dataclass

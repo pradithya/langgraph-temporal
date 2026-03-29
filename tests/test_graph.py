@@ -345,3 +345,58 @@ class TestTemporalGraphBuildInputWithNodeConfig:
         assert wi.node_activity_options["llm_node"].start_to_close_timeout == timedelta(
             seconds=600
         )
+
+    def test_build_input_with_sticky_task_queue(self) -> None:
+        mock_graph = MagicMock()
+        mock_graph.name = "test"
+        mock_graph.interrupt_before_nodes = []
+        mock_graph.interrupt_after_nodes = []
+        mock_client = MagicMock()
+
+        tg = TemporalGraph(mock_graph, mock_client)
+
+        config = {
+            "configurable": {
+                "sticky_task_queue": "sticky-workspace-1",
+            }
+        }
+        wi = tg._build_workflow_input({"key": "val"}, config)
+        assert wi.sticky_task_queue == "sticky-workspace-1"
+
+    def test_build_input_with_subagent_config_dict(self) -> None:
+        mock_graph = MagicMock()
+        mock_graph.name = "test"
+        mock_graph.interrupt_before_nodes = []
+        mock_graph.interrupt_after_nodes = []
+        mock_client = MagicMock()
+
+        tg = TemporalGraph(mock_graph, mock_client)
+
+        config = {
+            "configurable": {
+                "subagent_config": {
+                    "task_queue": "sub-queue",
+                    "execution_timeout_seconds": 600.0,
+                }
+            }
+        }
+        wi = tg._build_workflow_input({"key": "val"}, config)
+        assert wi.subagent_config is not None
+        assert wi.subagent_config.task_queue == "sub-queue"
+        assert wi.subagent_config.execution_timeout_seconds == 600.0
+
+    def test_build_input_with_subagent_config_object(self) -> None:
+        from langgraph.temporal.config import SubAgentConfig
+
+        mock_graph = MagicMock()
+        mock_graph.name = "test"
+        mock_graph.interrupt_before_nodes = []
+        mock_graph.interrupt_after_nodes = []
+        mock_client = MagicMock()
+
+        tg = TemporalGraph(mock_graph, mock_client)
+
+        sac = SubAgentConfig(task_queue="sub-q", execution_timeout_seconds=900.0)
+        config = {"configurable": {"subagent_config": sac}}
+        wi = tg._build_workflow_input({"key": "val"}, config)
+        assert wi.subagent_config is sac

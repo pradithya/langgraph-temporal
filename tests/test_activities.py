@@ -295,6 +295,58 @@ class TestExecuteNodeLogic:
         assert "scratch" not in channels_written
 
 
+class TestChildWorkflowRequestsContextVar:
+    def setup_method(self) -> None:
+        GraphRegistry.reset()
+
+    def test_context_var_no_default(self) -> None:
+        """Context variable has no default; .get([]) returns fallback."""
+        import contextvars
+
+        from langgraph.temporal.activities import _child_workflow_requests_var
+
+        ctx = contextvars.copy_context()
+        result = ctx.run(lambda: _child_workflow_requests_var.get([]))
+        assert result == []
+
+    def test_context_var_isolation(self) -> None:
+        """Each context gets its own list after .set()."""
+        import contextvars
+
+        from langgraph.temporal.activities import _child_workflow_requests_var
+
+        def set_and_get() -> list[dict[str, Any]]:
+            _child_workflow_requests_var.set([{"test": True}])
+            return _child_workflow_requests_var.get()
+
+        ctx1 = contextvars.copy_context()
+        ctx2 = contextvars.copy_context()
+
+        r1 = ctx1.run(set_and_get)
+        r2 = ctx2.run(lambda: _child_workflow_requests_var.get([]))
+
+        assert r1 == [{"test": True}]
+        assert r2 == []  # ctx2 is unaffected
+
+    def test_context_var_append_and_collect(self) -> None:
+        """Verify append-then-collect pattern used by activities."""
+        from langgraph.temporal.activities import _child_workflow_requests_var
+
+        # Simulate what _execute_node_impl does
+        _child_workflow_requests_var.set([])
+        _child_workflow_requests_var.get().append(
+            {"subagent_type": "researcher", "instruction": "research"}
+        )
+        _child_workflow_requests_var.get().append(
+            {"subagent_type": "coder", "instruction": "code"}
+        )
+
+        collected = _child_workflow_requests_var.get([])
+        assert len(collected) == 2
+        assert collected[0]["subagent_type"] == "researcher"
+        assert collected[1]["subagent_type"] == "coder"
+
+
 class TestMakeCounter:
     def test_counter_increments(self) -> None:
         counter = _make_counter()

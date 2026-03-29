@@ -14,6 +14,7 @@ from langgraph.temporal.config import (
     StateUpdatePayload,
     StreamEvent,
     StreamQueryResult,
+    SubAgentConfig,
     WorkflowInput,
     WorkflowOutput,
 )
@@ -240,6 +241,76 @@ class TestNodeActivityOutputCustomData:
             writes=[],
         )
         assert output.custom_data is None
+
+
+class TestSubAgentConfig:
+    def test_defaults(self) -> None:
+        sac = SubAgentConfig()
+        assert sac.task_queue is None
+        assert sac.sticky_task_queue is None
+        assert sac.execution_timeout_seconds == 1800.0
+
+    def test_custom_values(self) -> None:
+        sac = SubAgentConfig(
+            task_queue="subagent-queue",
+            sticky_task_queue="sticky-subagent",
+            execution_timeout_seconds=900.0,
+        )
+        assert sac.task_queue == "subagent-queue"
+        assert sac.sticky_task_queue == "sticky-subagent"
+        assert sac.execution_timeout_seconds == 900.0
+
+
+class TestRestoredStateStickyQueue:
+    def test_sticky_task_queue_default(self) -> None:
+        rs = RestoredState(checkpoint={"v": 1}, step=0)
+        assert rs.sticky_task_queue is None
+
+    def test_sticky_task_queue_set(self) -> None:
+        rs = RestoredState(
+            checkpoint={"v": 1},
+            step=5,
+            sticky_task_queue="deep-agent-workspace-42",
+        )
+        assert rs.sticky_task_queue == "deep-agent-workspace-42"
+
+
+class TestWorkflowInputStickyQueue:
+    def test_sticky_task_queue(self) -> None:
+        wi = WorkflowInput(
+            graph_definition_ref="ref",
+            sticky_task_queue="sticky-queue",
+        )
+        assert wi.sticky_task_queue == "sticky-queue"
+
+    def test_subagent_config(self) -> None:
+        sac = SubAgentConfig(task_queue="sub-queue")
+        wi = WorkflowInput(
+            graph_definition_ref="ref",
+            subagent_config=sac,
+        )
+        assert wi.subagent_config is not None
+        assert wi.subagent_config.task_queue == "sub-queue"
+
+
+class TestNodeActivityOutputChildWorkflowRequests:
+    def test_with_child_workflow_requests(self) -> None:
+        output = NodeActivityOutput(
+            node_name="tools",
+            writes=[],
+            child_workflow_requests=[
+                {"subagent_type": "researcher", "instruction": "do research"}
+            ],
+        )
+        assert output.child_workflow_requests is not None
+        assert len(output.child_workflow_requests) == 1
+
+    def test_without_child_workflow_requests(self) -> None:
+        output = NodeActivityOutput(
+            node_name="tools",
+            writes=[],
+        )
+        assert output.child_workflow_requests is None
 
 
 class TestStreamEvent:

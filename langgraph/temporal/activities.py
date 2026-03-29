@@ -6,6 +6,7 @@ All I/O operations (LLM calls, tool invocations, etc.) happen inside Activities.
 
 from __future__ import annotations
 
+import contextvars
 import itertools
 from collections.abc import Sequence
 from typing import Any, cast
@@ -34,6 +35,48 @@ from langgraph.temporal.config import (
     NodeActivityOutput,
 )
 from langgraph.temporal.converter import GraphRegistry
+
+# Generic extension point: context variable for collecting Child Workflow
+# requests during Activity execution. Middleware (e.g., TemporalSubAgentMiddleware)
+# appends requests here; the Activity collects them into NodeActivityOutput.
+_child_workflow_requests_var: contextvars.ContextVar[list[dict[str, Any]]] = (
+    contextvars.ContextVar("_child_workflow_requests")
+)
+
+# Worker-specific task queue for worker affinity.
+# Set at worker startup via `set_worker_task_queue()`. The
+# `get_available_task_queue` activity returns this value so the Workflow
+# can pin all subsequent Activities to this worker's queue.
+_worker_task_queue: str | None = None
+
+
+def set_worker_task_queue(queue: str) -> None:
+    """Set the worker-specific task queue name.
+
+    Called at worker startup. The `get_available_task_queue` activity
+    returns this value to the Workflow for worker affinity.
+    """
+    global _worker_task_queue  # noqa: PLW0603
+    _worker_task_queue = queue
+
+
+@activity.defn
+async def get_available_task_queue() -> str:
+    """Return this worker's unique task queue name.
+
+    The Workflow calls this activity on the shared distribution queue.
+    Whichever worker picks it up returns its own unique queue name. The
+    Workflow then dispatches all subsequent Activities to that queue,
+    achieving worker affinity (following the Temporal worker-specific
+    task queues pattern).
+    """
+    if _worker_task_queue is None:
+        raise ApplicationError(
+            "Worker task queue not configured. "
+            "Call set_worker_task_queue() at worker startup.",
+            non_retryable=True,
+        )
+    return _worker_task_queue
 
 
 def _make_counter() -> Any:
@@ -123,6 +166,11 @@ async def _execute_node_impl(input: NodeActivityInput) -> NodeActivityOutput:
     try:
         activity.heartbeat(f"Starting node {input.node_name}")
 
+        # Initialize the child workflow requests context variable so that
+        # middleware (e.g., TemporalSubAgentMiddleware) can append requests
+        # during node execution.
+        _child_workflow_requests_var.set([])
+
         # Set the runnable config context so that interrupt() and other
         # functions that call get_config() can find it.  This is normally
         # done by the Runnable invoke/ainvoke tracing path, but Activities
@@ -161,6 +209,9 @@ async def _execute_node_impl(input: NodeActivityInput) -> NodeActivityOutput:
         # Filter out UntrackedValue writes
         serializable_writes = _filter_untracked_writes(all_writes, graph)
 
+        # Collect any Child Workflow requests stored during execution
+        child_wf_requests = _child_workflow_requests_var.get([])
+
         return NodeActivityOutput(
             node_name=input.node_name,
             writes=serializable_writes,
@@ -169,6 +220,7 @@ async def _execute_node_impl(input: NodeActivityInput) -> NodeActivityOutput:
             push_sends=push_sends if push_sends else None,
             command=command_data,
             custom_data=custom_data if custom_data else None,
+            child_workflow_requests=(child_wf_requests if child_wf_requests else None),
         )
     except GraphInterrupt as exc:
         # Node called interrupt() - propagate to Workflow

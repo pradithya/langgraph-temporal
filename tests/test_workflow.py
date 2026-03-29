@@ -206,6 +206,89 @@ class TestExtractCommandGotos:
         assert gotos[1] == {"node": "c", "arg": None}
 
 
+class TestStickyTaskQueueRouting:
+    def test_sticky_queue_overrides_per_node(self) -> None:
+        """Sticky task queue takes priority over per-node overrides."""
+        from langgraph.temporal.workflow import LangGraphWorkflow
+
+        wf = LangGraphWorkflow.__new__(LangGraphWorkflow)
+        wf._node_task_queues = {"gpu_node": "gpu-queue"}
+        wf._node_activity_options = {}
+        wf._node_retry_policies = {}
+        wf._sticky_task_queue = "sticky-workspace-1"
+        wf._subagent_config = None
+
+        # Sticky queue should override per-node queue
+        assert wf._task_queue_for_node("gpu_node") == "sticky-workspace-1"
+        assert wf._task_queue_for_node("any_node") == "sticky-workspace-1"
+
+    def test_no_sticky_queue_uses_per_node(self) -> None:
+        """Without sticky queue, per-node overrides work normally."""
+        from langgraph.temporal.workflow import LangGraphWorkflow
+
+        wf = LangGraphWorkflow.__new__(LangGraphWorkflow)
+        wf._node_task_queues = {"gpu_node": "gpu-queue"}
+        wf._node_activity_options = {}
+        wf._node_retry_policies = {}
+        wf._sticky_task_queue = None
+        wf._subagent_config = None
+
+        assert wf._task_queue_for_node("gpu_node") == "gpu-queue"
+        assert wf._task_queue_for_node("other") is None
+
+
+class TestContinueAsNewForwarding:
+    def test_sticky_queue_in_continue_as_new_input(self) -> None:
+        """Verify sticky_task_queue and subagent_config are included in
+        continue-as-new WorkflowInput."""
+        from langgraph.temporal.config import RestoredState, SubAgentConfig
+
+        sac = SubAgentConfig(task_queue="sub-q", execution_timeout_seconds=600.0)
+        wi = WorkflowInput(
+            graph_definition_ref="ref",
+            input_data=None,
+            recursion_limit=100,
+            restored_state=RestoredState(
+                checkpoint={"v": 1},
+                step=50,
+                sticky_task_queue="sticky-q",
+            ),
+            sticky_task_queue="sticky-q",
+            subagent_config=sac,
+        )
+        assert wi.sticky_task_queue == "sticky-q"
+        assert wi.subagent_config is not None
+        assert wi.subagent_config.task_queue == "sub-q"
+        assert wi.restored_state is not None
+        assert wi.restored_state.sticky_task_queue == "sticky-q"
+
+
+class TestProcessChildWorkflowRequests:
+    def test_no_requests_is_noop(self) -> None:
+        """Results without child_workflow_requests are not modified."""
+        from langgraph.temporal.config import NodeActivityOutput
+        from langgraph.temporal.workflow import LangGraphWorkflow
+
+        wf = LangGraphWorkflow.__new__(LangGraphWorkflow)
+        wf._subagent_config = None
+        wf.step = 0
+
+        results = [
+            NodeActivityOutput(node_name="a", writes=[("x", 1)]),
+        ]
+        original_writes = list(results[0].writes)
+
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(
+            wf._process_child_workflow_requests(
+                results,
+                WorkflowInput(graph_definition_ref="ref"),
+            )
+        )
+        assert results[0].writes == original_writes
+
+
 class TestStreamEvent:
     def test_values_event(self) -> None:
         event = StreamEvent(

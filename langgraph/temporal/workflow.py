@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy as TemporalRetryPolicy
+from temporalio.workflow import ParentClosePolicy
 
 from langgraph.temporal.config import (
     ActivityOptions,
@@ -27,6 +28,7 @@ from langgraph.temporal.config import (
     StateUpdatePayload,
     StreamEvent,
     StreamQueryResult,
+    SubAgentConfig,
     WorkflowInput,
     WorkflowOutput,
 )
@@ -112,6 +114,9 @@ class LangGraphWorkflow:
         self._node_task_queues: dict[str, str] = {}
         self._node_activity_options: dict[str, ActivityOptions] = {}
         self._node_retry_policies: dict[str, RetryPolicyConfig] = {}
+        self._sticky_task_queue: str | None = None
+        self._use_worker_affinity: bool = False
+        self._subagent_config: SubAgentConfig | None = None
 
     @workflow.run
     async def run(self, input: WorkflowInput) -> WorkflowOutput:
@@ -130,6 +135,22 @@ class LangGraphWorkflow:
         self._node_task_queues = input.node_task_queues or {}
         self._node_activity_options = input.node_activity_options or {}
         self._node_retry_policies = input.node_retry_policies or {}
+        self._sticky_task_queue = input.sticky_task_queue
+        self._use_worker_affinity = input.use_worker_affinity
+        self._subagent_config = input.subagent_config
+
+        # Worker affinity: discover a worker-specific task queue.
+        # If use_worker_affinity is set and we don't already have a
+        # sticky queue (e.g., from continue-as-new), call the
+        # get_available_task_queue activity on the shared queue.
+        # Whichever worker picks it up returns its unique queue name.
+        if input.use_worker_affinity and not self._sticky_task_queue:
+            from langgraph.temporal.activities import get_available_task_queue
+
+            self._sticky_task_queue = await workflow.execute_activity(
+                get_available_task_queue,
+                start_to_close_timeout=timedelta(seconds=10),
+            )
 
         # Initialize or restore channels and checkpoint
         if input.restored_state:
@@ -212,6 +233,9 @@ class LangGraphWorkflow:
 
             # Execute node Activities (parallel where applicable)
             results = await self._execute_nodes(next_tasks, graph, input)
+
+            # Process Child Workflow requests (e.g., sub-agent dispatch)
+            await self._process_child_workflow_requests(results, input)
 
             # Handle interrupted nodes
             interrupted_results = [r for r in results if r.interrupts]
@@ -305,10 +329,14 @@ class LangGraphWorkflow:
                         restored_state=RestoredState(
                             checkpoint=cast(Any, checkpoint_data),
                             step=self.step,
+                            sticky_task_queue=self._sticky_task_queue,
                         ),
                         node_task_queues=input.node_task_queues,
                         node_activity_options=input.node_activity_options,
                         node_retry_policies=input.node_retry_policies,
+                        sticky_task_queue=self._sticky_task_queue,
+                        use_worker_affinity=input.use_worker_affinity,
+                        subagent_config=self._subagent_config,
                     )
                 )
 
@@ -331,7 +359,15 @@ class LangGraphWorkflow:
         return any(t.name in interrupt_nodes for t in tasks)
 
     def _task_queue_for_node(self, node_name: str) -> str | None:
-        """Get the task queue override for a node, if any."""
+        """Get the task queue for a node, respecting affinity configuration.
+
+        Precedence:
+        1. Sticky task queue (if configured) -- overrides everything for affinity
+        2. Per-node task queue override (from node_task_queues config)
+        3. None (use workflow's default task queue)
+        """
+        if self._sticky_task_queue:
+            return self._sticky_task_queue
         if self._node_task_queues:
             return self._node_task_queues.get(node_name)
         return None
@@ -359,7 +395,38 @@ class LangGraphWorkflow:
         activity_input: NodeActivityInput,
         node_name: str,
     ) -> NodeActivityOutput:
-        """Execute a single node Activity with per-node configuration."""
+        """Execute a single node Activity with per-node configuration.
+
+        If worker affinity is enabled and the pinned worker is unavailable
+        (schedule-to-close timeout), falls back to re-discovering a new
+        worker via `get_available_task_queue` and retries once.
+        """
+        result = await self._dispatch_activity(activity_input, node_name)
+        if result is not None:
+            return result
+
+        # Fallback: pinned worker timed out, re-discover and retry
+        workflow.logger.warn(
+            f"Activity '{node_name}' failed on sticky queue "
+            f"'{self._sticky_task_queue}', re-discovering worker"
+        )
+        await self._rediscover_worker()
+        result = await self._dispatch_activity(activity_input, node_name)
+        if result is not None:
+            return result
+
+        # Both attempts failed — raise the original error
+        raise RuntimeError(f"Activity '{node_name}' failed after worker re-discovery")
+
+    async def _dispatch_activity(
+        self,
+        activity_input: NodeActivityInput,
+        node_name: str,
+    ) -> NodeActivityOutput | None:
+        """Dispatch an Activity, returning None on schedule-to-close timeout
+        when worker affinity is enabled (signals the pinned worker is gone)."""
+        from temporalio.exceptions import ActivityError
+
         opts = self._activity_options_for_node(node_name)
         task_queue = self._task_queue_for_node(node_name)
         retry_policy = self._retry_policy_for_node(node_name)
@@ -376,11 +443,33 @@ class LangGraphWorkflow:
         if retry_policy is not None:
             kwargs["retry_policy"] = retry_policy
 
-        return await workflow.execute_activity(
-            f"{node_name}",
-            activity_input,
-            result_type=NodeActivityOutput,
-            **kwargs,
+        try:
+            return await workflow.execute_activity(
+                f"{node_name}",
+                activity_input,
+                result_type=NodeActivityOutput,
+                **kwargs,
+            )
+        except ActivityError:
+            # Only fallback if worker affinity is active — the failure
+            # likely means the pinned worker is gone.
+            if self._use_worker_affinity and self._sticky_task_queue:
+                return None
+            raise
+
+    async def _rediscover_worker(self) -> None:
+        """Clear the sticky queue and discover a new worker.
+
+        Called when the pinned worker appears to be unavailable. The
+        Workflow re-runs `get_available_task_queue` on the shared queue
+        to find a different worker.
+        """
+        from langgraph.temporal.activities import get_available_task_queue
+
+        self._sticky_task_queue = None
+        self._sticky_task_queue = await workflow.execute_activity(
+            get_available_task_queue,
+            start_to_close_timeout=timedelta(seconds=10),
         )
 
     def _is_subgraph_node(self, node_name: str, graph: Any) -> bool:
@@ -570,6 +659,105 @@ class LangGraphWorkflow:
                         # Simple node name goto
                         goto_sends.append({"node": target, "arg": None})
         return goto_sends
+
+    async def _process_child_workflow_requests(
+        self,
+        results: list[NodeActivityOutput],
+        wf_input: WorkflowInput,
+    ) -> None:
+        """Process Child Workflow requests from Activity results.
+
+        Iterates over results, dispatches Child Workflows for any
+        `child_workflow_requests`, and injects result/error writes back
+        into the originating result's writes list.
+        """
+        for result in results:
+            if not result.child_workflow_requests:
+                continue
+
+            # Dispatch all child workflows concurrently
+            child_outputs = await asyncio.gather(
+                *[
+                    self._dispatch_child_workflow(req, wf_input, idx)
+                    for idx, req in enumerate(result.child_workflow_requests)
+                ],
+                return_exceptions=True,
+            )
+
+            # Inject results back as writes
+            for req, child_output in zip(
+                result.child_workflow_requests, child_outputs, strict=True
+            ):
+                tool_call_id = req.get("tool_call_id", "")
+                if isinstance(child_output, BaseException):
+                    subagent_type = req.get("subagent_type", "unknown")
+                    content = f"Sub-agent '{subagent_type}' failed: {child_output}"
+                else:
+                    # Extract last message from child workflow output
+                    messages = child_output.channel_values.get("messages", [])
+                    if messages:
+                        last_msg = messages[-1]
+                        content = (
+                            last_msg if isinstance(last_msg, str) else str(last_msg)
+                        )
+                    else:
+                        content = ""
+
+                result.writes.append(
+                    (
+                        "messages",
+                        {
+                            "type": "tool",
+                            "content": content,
+                            "tool_call_id": tool_call_id,
+                        },
+                    )
+                )
+
+    async def _dispatch_child_workflow(
+        self,
+        req: dict[str, Any],
+        wf_input: WorkflowInput,
+        index: int,
+    ) -> WorkflowOutput:
+        """Dispatch a single Child Workflow for a sub-agent request."""
+        subagent_type = req.get("subagent_type", "unknown")
+        graph_ref = req.get("graph_definition_ref", wf_input.graph_definition_ref)
+        initial_state = req.get("initial_state", {})
+
+        parent_wf_id = workflow.info().workflow_id
+        child_wf_id = f"{parent_wf_id}/subagent/{subagent_type}/{self.step}_{index}"
+
+        # Determine task queue and timeout from subagent config
+        task_queue = workflow.info().task_queue
+        execution_timeout = timedelta(minutes=30)
+        child_sticky_queue: str | None = None
+
+        if self._subagent_config:
+            if self._subagent_config.task_queue:
+                task_queue = self._subagent_config.task_queue
+            if self._subagent_config.execution_timeout_seconds:
+                execution_timeout = timedelta(
+                    seconds=self._subagent_config.execution_timeout_seconds
+                )
+            child_sticky_queue = self._subagent_config.sticky_task_queue
+
+        child_input = WorkflowInput(
+            graph_definition_ref=graph_ref,
+            input_data=initial_state,
+            recursion_limit=wf_input.recursion_limit,
+            sticky_task_queue=child_sticky_queue,
+        )
+
+        result: WorkflowOutput = await workflow.execute_child_workflow(
+            LangGraphWorkflow.run,
+            child_input,
+            id=child_wf_id,
+            task_queue=task_queue,
+            execution_timeout=execution_timeout,
+            parent_close_policy=ParentClosePolicy.TERMINATE,
+        )
+        return result
 
     async def _resolve_conditional_edges(
         self,
