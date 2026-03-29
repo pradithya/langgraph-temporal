@@ -26,6 +26,9 @@ htmlcov/
 # Environment
 .env
 
+# Docs
+site/
+
 # OS
 .DS_Store
 Thumbs.db

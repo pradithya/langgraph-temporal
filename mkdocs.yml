@@ -1,0 +1,111 @@
+site_name: langgraph-temporal
+site_description: Temporal integration for LangGraph — durable execution for stateful AI agents.
+site_url: https://pradithya.github.io/langgraph-temporal
+repo_url: https://github.com/pradithya/langgraph-temporal
+repo_name: pradithya/langgraph-temporal
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - Guides:
+    - Core Concepts: guides/concepts.md
+    - Human-in-the-Loop: guides/human-in-the-loop.md
+    - Worker Affinity: guides/worker-affinity.md
+    - Streaming: guides/streaming.md
+    - Encryption: guides/encryption.md
+    - Large Payloads: guides/large-payloads.md
+    - Activity Tools: guides/activity-tools.md
+    - Metrics & Observability: guides/metrics.md
+  - API Reference:
+    - TemporalGraph: reference/graph.md
+    - Worker: reference/worker.md
+    - Checkpoint: reference/checkpoint.md
+    - Streaming: reference/streaming.md
+    - Configuration: reference/config.md
+    - Encryption: reference/encryption.md
+    - Large Payloads: reference/codec.md
+    - Metrics: reference/metrics.md
+    - Tools: reference/tools.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            docstring_style: google
+            merge_init_into_class: true
+            show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            unwrap_annotated: true
+            filters:
+              - "!^_"  # exclude private members
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/pradithya/langgraph-temporal
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/langgraph-temporal/

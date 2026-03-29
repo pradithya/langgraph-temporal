@@ -18,6 +18,7 @@ dependencies = [
 
 [project.urls]
 Source = "https://github.com/pradithya/langgraph-temporal"
+Documentation = "https://pradithya.github.io/langgraph-temporal"
 
 [dependency-groups]
 test = [
@@ -33,9 +34,14 @@ lint = [
   "codespell",
   "mypy",
 ]
+docs = [
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.27",
+]
 dev = [
   {include-group = "test"},
   {include-group = "lint"},
+  {include-group = "docs"},
 ]
 
 [tool.uv]
